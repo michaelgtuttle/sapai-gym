@@ -7,6 +7,8 @@ from typing import Optional
 import itertools
 from sklearn.preprocessing import OneHotEncoder
 
+import sys
+sys.path.append('/content/drive/MyDrive/storkfish_github/sapai_master') #/path/to/application/app/folder')
 from sapai import Player, Pet, Food, Battle
 from sapai.data import data
 
