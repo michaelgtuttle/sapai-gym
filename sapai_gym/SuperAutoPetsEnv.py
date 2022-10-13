@@ -13,7 +13,7 @@ from sapai.data import data
 
 class SuperAutoPetsEnv(gym.Env):
     metadata = {'render.modes': ['human']}
-    MAX_ACTIONS = 213
+    MAX_ACTIONS = 85 #213
     ACTION_BASE_NUM = {
         "end_turn": 0,
         "buy_pet": 1,
@@ -27,7 +27,7 @@ class SuperAutoPetsEnv(gym.Env):
     }
     # Max turn limit to prevent infinite loops
     MAX_TURN = 25
-    BAD_ACTION_PENALTY = -0.1
+    BAD_ACTION_PENALTY = -0.0001
 
     # Max number of pets that can be on a team
     MAX_TEAM_PETS = 5
@@ -74,6 +74,7 @@ class SuperAutoPetsEnv(gym.Env):
         # Initialization. Initial values assigned in reset
         self.opponents = None
         self.bad_action_reward_sum = 0
+        self.actions_this_turn = 0
 
         self.reset()
 
@@ -89,9 +90,13 @@ class SuperAutoPetsEnv(gym.Env):
 
     def resolve_action(self, action):
         """ Resolve the action. step() should be used in cases where state is needed to be returned"""
+        self.actions_this_turn += 1
         if not isinstance(action, int):
             # Convert np int to python int
             action = action.item()
+        if self.actions_this_turn > 20:
+            pass
+            #self.bad_action_reward_sum += self.BAD_ACTION_PENALTY
         if not self._is_valid_action(action):
             if self.valid_actions_only:
                 raise RuntimeError(f"Environment tried to play invalid action {action}. Valid actions are {self._avail_actions().keys()}")
@@ -111,6 +116,7 @@ class SuperAutoPetsEnv(gym.Env):
                 battle_result = Battle(self.player.team, opponent).battle()
                 self._player_fight_outcome(battle_result)
                 self.player.start_turn()
+                self.actions_this_turn = 0
         self.last_action = action
 
     @property
@@ -146,7 +152,7 @@ class SuperAutoPetsEnv(gym.Env):
         assert 0 <= self.player.wins <= 10
         if self.valid_actions_only:
             assert self.bad_action_reward_sum == 0
-        return self.player.wins / 10 + self.bad_action_reward_sum
+        return self.player.wins / 10 + self.bad_action_reward_sum/self.player.turn
 
     def _avail_end_turn(self):
         action_dict = dict()
@@ -177,8 +183,8 @@ class SuperAutoPetsEnv(gym.Env):
             if shop_slot.slot_type == "food":
                 if shop_slot.cost <= self.player.gold:
                     # Multi-foods (eg. salad, sushi, etc.)
-                    food_effect = data["foods"][shop_slot.item.name]["ability"]["effect"]
-                    if shop_slot.item.name == "food-canned-food" or ("target" in food_effect and "kind" in food_effect["target"] and food_effect["target"]["kind"] == "RandomFriend"):
+                    food_effect = data["foods"][shop_slot.obj.name]["ability"]["effect"]
+                    if shop_slot.obj.name == "food-canned-food" or ("target" in food_effect and "kind" in food_effect["target"] and food_effect["target"]["kind"] == "RandomFriend"):
                         action_num = self.ACTION_BASE_NUM["buy_food_team"] + food_index
                         action_dict[action_num] = (self.player.buy_food, shop_idx)
                     else:
@@ -210,11 +216,11 @@ class SuperAutoPetsEnv(gym.Env):
         for shop_idx, shop_slot in enumerate(self.player.shop):
             if shop_slot.slot_type == "pet":
                 # Can't combine if pet not already on team
-                if shop_slot.item.name not in team_names:
+                if shop_slot.obj.name not in team_names:
                     continue
 
                 if shop_slot.cost <= self.player.gold:
-                    for team_idx in team_names[shop_slot.item.name]:
+                    for team_idx in team_names[shop_slot.obj.name]:
                         action_num = self.ACTION_BASE_NUM["buy_combine"] + (shop_pet_index * self.MAX_TEAM_PETS) + team_idx
                         action_dict[action_num] = (self.player.buy_combine, shop_idx, team_idx)
                 shop_pet_index += 1
@@ -277,6 +283,27 @@ class SuperAutoPetsEnv(gym.Env):
             for k, perm in enumerate(perms)
         }
 
+    def _avail_move(self):
+        action_dict = {}
+        offset = self.ACTION_BASE_NUM["reorder"]
+        max_team_len = 5
+        team_len = len(self.player.team)
+        for team_idx, slot in enumerate(self.player.team):
+            if slot.empty:
+                continue
+            else:
+                move_to = [i for i in range(max_team_len)]
+                try:
+                    move_to.remove(team_idx)
+                except:
+                    print(self.player.team)
+                    raise Exception(f'team_idx {team_idx} not in list {move_to}')
+                for idx, item in enumerate(move_to):
+                    action_num = offset + team_idx*(max_team_len-1) + idx
+                    action_dict[action_num] = (self.player.move, team_idx, item)
+        return action_dict
+
+
     @staticmethod
     def _get_action_name(input_action):
         return str(input_action[0].__name__)
@@ -290,7 +317,7 @@ class SuperAutoPetsEnv(gym.Env):
         team_combine_actions = self._avail_team_combine()
         sell_actions = self._avail_sell()
         roll_actions = self._avail_roll()
-        reorder_actions = self._avail_reorder()
+        reorder_actions = self._avail_move() #self._avail_reorder()
         # TODO : FREEZE SHOP ITEMS
 
         # Verify no duplicates or incorrectly indexed actions
@@ -355,9 +382,9 @@ class SuperAutoPetsEnv(gym.Env):
 
     def _get_shop_foods(self):
         food_slots = []
-        for slot in self.player.shop.shop_slots:
+        for slot in self.player.shop.slots: # changed from player.shop.shop_slots
             if slot.slot_type == "food":
-                food_slots.append((slot.item, slot.cost))
+                food_slots.append((slot.obj, slot.cost)) # changed from slot.item
         return food_slots
 
     def _encode_state(self):
